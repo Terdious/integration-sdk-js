@@ -68,10 +68,23 @@ export interface DeviceFeature {
  * the scalar sent as the command value (integers everywhere; strings only on
  * the `text`/`select` type), `label` the human name, `sort_order` the display
  * order (defaulted to the array index).
+ *
+ * `label` is a string, or a multi-language object (`{ en, fr?, de?, es? }`,
+ * `en` required, each text 1-255 characters) so Gladys shows the option in
+ * the user's language — Gladys does not send that language to the
+ * integration at discovery time. Gladys keeps the object and stores its
+ * English text as the label every other consumer reads (HomeKit, Matter,
+ * scenes, history); the frontend falls back to `en`. An i18n catalog of the
+ * core for that category/type (known modes, presets…) still wins over it.
+ *
+ * The object form needs a Gladys that accepts it — the release shipping
+ * GladysAssistant/Gladys#3209 (expected 5.3.0): an older Gladys refuses the
+ * whole discovery publication with a 400, so raise the manifest
+ * `gladys_version` minimum before publishing it.
  */
 export interface DeviceFeatureSupportedOption {
   value: number | string;
-  label: string;
+  label: string | MultiLanguageMessage;
   sort_order?: number;
 }
 

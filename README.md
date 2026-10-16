@@ -1391,6 +1391,30 @@ import {
 } from '@gladysassistant/integration-sdk';
 ```
 
+### Option labels in the user's language
+
+Gladys does not send the user's language at discovery time, so a `supported_options` label you publish as a string
+shows the same text to everyone. Publish it as a multi-language object instead (`en` required, each text 1–255
+characters) and Gladys shows the user's language, falling back to `en`:
+
+```js
+{
+  name: 'Air quality',
+  external_id: gladys.externalId('homecoach:70ee50:air-quality'),
+  category: DEVICE_FEATURE_CATEGORIES.TEXT,
+  type: DEVICE_FEATURE_TYPES.TEXT.SELECT,
+  read_only: true,
+  supported_options: [
+    { value: 'healthy', label: { en: 'Healthy', fr: 'Sain', de: 'Gesund', es: 'Saludable' } },
+    { value: 'fine', label: { en: 'Fine', fr: 'Correct', de: 'In Ordnung', es: 'Correcto' } },
+  ],
+}
+```
+
+Gladys stores the English text as the label every other consumer reads (HomeKit, Matter, scenes, history). The
+object form needs the Gladys release that ships GladysAssistant/Gladys#3209 (expected 5.3.0): an older Gladys refuses
+the whole publication with a `400`, so raise your manifest's `gladys_version` minimum before publishing it.
+
 ### Logger
 
 The SDK ships the standard integration logger, so every integration does not have to reimplement one. Integration

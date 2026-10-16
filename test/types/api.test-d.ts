@@ -547,7 +547,22 @@ const main = async (): Promise<void> => {
     max: 30,
     step: 0.5,
   };
-  void [ptzFeature, sourceFeature, steppedFeature];
+  // A read-only select whose labels follow the user's language (Gladys keeps
+  // the object and falls back to `en`).
+  const airQualityFeature: DeviceFeature = {
+    name: 'Air quality',
+    external_id: gladys.externalId('homecoach:abc:air-quality'),
+    category: DEVICE_FEATURE_CATEGORIES.TEXT,
+    type: DEVICE_FEATURE_TYPES.TEXT.SELECT,
+    read_only: true,
+    supported_options: [
+      { value: 'healthy', label: { en: 'Healthy', fr: 'Sain', de: 'Gesund', es: 'Saludable' } },
+      { value: 'fine', label: 'Fine' },
+    ],
+  };
+  // @ts-expect-error a multi-language label requires its English text
+  const labelWithoutEnglish: DeviceFeatureSupportedOption = { value: 'healthy', label: { fr: 'Sain' } };
+  void [ptzFeature, sourceFeature, steppedFeature, airQualityFeature, labelWithoutEnglish];
 
   const error = new GladysApiError(401, 'UNAUTHORIZED', 'Invalid token');
   const parts: [number, string, string] = [error.status, error.code, error.message];

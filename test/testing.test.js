@@ -699,6 +699,37 @@ describe('createFakeGladys(options?)', () => {
       assert.equal(gladys.fake.requests.filter((request) => request.status !== 200).length, 9);
     });
 
+    it('should simulate the image download of a sub-container seeded pulling', async () => {
+      const gladys = createFakeGladys({
+        containers: [
+          { name: 'frigate', status: 'pulling', desired: 'stopped', started_at: null, ports: [], pull: null },
+          { name: 'mqtt', status: 'pulling', desired: 'stopped', started_at: null, ports: [], pull: null },
+        ],
+      });
+      const frigate = gladys.startContainer('frigate');
+      const mqtt = gladys.restartContainer('mqtt');
+      await new Promise((resolve) => {
+        setImmediate(resolve);
+      });
+      gladys.fake.finishPull('frigate');
+      gladys.fake.finishPull('mqtt', { lastError: 'UNABLE_TO_PULL_IMAGE' });
+      assert.deepEqual(await frigate, { success: true, status: 'running' });
+      await assert.rejects(mqtt, { code: 'UNABLE_TO_PULL_IMAGE' });
+      assert.deepEqual(gladys.fake.containers[0], {
+        name: 'frigate',
+        status: 'running',
+        desired: 'stopped',
+        started_at: null,
+        ports: [],
+        pull: null,
+        last_error: null,
+      });
+      assert.equal(gladys.fake.containers[1].status, 'stopped');
+      // a container that is not downloading starts right away
+      assert.deepEqual(await gladys.startContainer('frigate'), { success: true });
+      assert.throws(() => gladys.fake.finishPull('unknown'), /no sub-container named unknown/);
+    });
+
     it('should answer success to the other calls and record them', async () => {
       const gladys = createFakeGladys();
       assert.deepEqual(await gladys.startContainer('mqtt', { env: { PASSWORD: 'x' } }), { success: true });

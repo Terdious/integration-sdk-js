@@ -141,9 +141,9 @@ All methods return Promises; host API errors are thrown as `GladysApiError { sta
 | `getStatus()`                                                | Gladys version + integration service status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `setConnectionStatus(connected, message?)`                   | Application-level connection status shown in the Configuration screen (`message` is an optional multi-language object, e.g. `{ en: 'Token expired' }`). Distinct from the container state machine: a cloud integration can be RUNNING and still disconnected from its third-party service                                                                                                                                                                                                                                                                    |
 | `getContainers()`                                            | Sub-containers declared in the manifest: Docker status (`running` / `stopped`, or `pulling` with `pull: { progress, detail }` while a `manual` image downloads at its first start; `last_error` after a failed asynchronous start), desired state, published ports (`{ container_port, protocol, host_port, label, name, browsable }`, `host_port: null` while none is assigned yet), granted/available hardware classes, granted Linux capabilities (`capabilities: [{ name, granted }]`)                                                                   |
-| `startContainer(name, { env }?)`                             | Creates (if needed) and starts a declared sub-container — typically after generating its config files in `/data`; `env` carries runtime-computed values (secrets never go through the public manifest). Resolves `{ success, status: 'pulling' }` when the image must be downloaded first: poll `getContainers()` until `running`                                                                                                                                                                                                                            |
+| `startContainer(name, { env, timeoutMs, onProgress }?)`      | Creates (if needed) and starts a declared sub-container — typically after generating its config files in `/data`; `env` carries runtime-computed values (secrets never go through the public manifest). Resolves once the container runs: when the image must be downloaded first (the core answers `202 pulling`), it polls `getContainers()` every 2 s, calls `onProgress(pull)`, and resolves `{ success, status: 'running' }`, or rejects with `error.code` = the `last_error`, `CONTAINER_NOT_STARTED` or `CONTAINER_START_TIMEOUT` (default 30 min)    |
 | `stopContainer(name)`                                        | Stops a sub-container; the supervisor will not restart it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `restartContainer(name)`                                     | Restarts a sub-container, e.g. after rewriting its config through `/data`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `restartContainer(name, { timeoutMs, onProgress }?)`         | Restarts a sub-container, e.g. after rewriting its config through `/data`; waits for an image download like `startContainer`                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `scanNetwork(type, options?)`                                | On-demand mediated network scan of a capture declared in the manifest `network_discovery` field (`udp-broadcast` \| `udp-active-broadcast` \| `mdns` \| `ssdp`); returns the RAW results — parsing them is the integration's job (`parseMdnsTxt` turns the raw mDNS TXT entries into an object). `udp-active-broadcast` (query/response, TP-Link Kasa style) additionally takes `{ port, payload }`: the integration forges the request, the core broadcasts it and relays the raw unicast replies                                                           |
 | `wakeOnLan(mac, options?)`                                   | Sends a standard Wake-on-LAN magic packet from the Gladys core network namespace (bridge containers cannot reach the LAN in broadcast). Requires `network_wake: true` in the manifest (403 otherwise); the core builds the fixed magic packet itself (never integration-provided bytes) and bounds the rate to 1 wake per 2 s per integration (429 beyond). Options: `{ address, port, sourcePort }`                                                                                                                                                         |
 
@@ -1191,6 +1191,23 @@ const coral = frigate.devices.find((d) => d.class === 'coral-usb');
 const detector = coral.granted && coral.available ? 'edgetpu' : 'cpu'; // adapt to what the user granted
 ```
 
+`startContainer` and `restartContainer` resolve once the container runs, so connecting to it right after is safe.
+The first start of a `start: "manual"` entry downloads its image (the install does not pull it, it can weigh
+gigabytes): the core answers `202` at once and the SDK waits for the download, polling `getContainers()` every 2 s.
+Relay the progress in the connection status, and expect a rejection when the download fails:
+
+```js
+try {
+  await gladys.startContainer('frigate', {
+    timeoutMs: 60 * 60 * 1000, // default: 30 minutes
+    onProgress: ({ progress }) =>
+      gladys.setConnectionStatus(false, { en: `Downloading Frigate… ${progress ?? '?'} %` }),
+  });
+} catch (e) {
+  // e.code: 'UNABLE_TO_PULL_IMAGE', 'UNABLE_TO_START_CONTAINER', 'CONTAINER_NOT_STARTED', 'CONTAINER_START_TIMEOUT'
+}
+```
+
 When the user changes the hardware grants, the affected sub-containers are recreated and `onHardwareUpdated` fires:
 regenerate the configs and (re)start what is needed.
 
@@ -1497,6 +1514,10 @@ test('publishes the temperature on poll', async () => {
   first), `webhook` in the default `fire_and_forget` mode — and, unlike production where an event has no ack, an
   error thrown by their handler rejects so the test sees it. `fake.send(type, payload)` sends any other
   WebSocket message.
+- **Image downloads**: a container of `fake.containers` seeded with `status: 'pulling'` answers its
+  `startContainer` / `restartContainer` with the core's `202 pulling`, and the call waits until
+  `fake.finishPull(name)` (it then runs) or `fake.finishPull(name, { lastError: 'UNABLE_TO_PULL_IMAGE' })` (the
+  call rejects with that code).
 - **The lifecycle**: `connect()` / `disconnect()` also await your async `'connected'` / `'disconnected'`
   listeners (an error they throw rejects), and `handleShutdown(cleanup)` does not touch the process signals:
   `gladys.fake.shutdown(signal?)` runs the cleanup then disconnects, without exiting — it disconnects even when the

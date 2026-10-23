@@ -47,6 +47,8 @@ import {
   ContainerControlResponse,
   ContainerPullProgress,
   ContainerStartError,
+  ContainerWaitError,
+  ContainerWaitErrorCode,
   LinkedContact,
   LinkedUser,
   logger,
@@ -226,9 +228,26 @@ const main = async (): Promise<void> => {
   const unnamedPort: ContainerPort['name'] = null;
   const portName: ContainerPort['name'] = 'ocpp';
   await gladys.startContainer('mqtt', { env: { MQTT_PASSWORD: 's3cr3t' } });
-  // first start of a `manual` entry: the image downloads in the background (202)
-  const started: ContainerControlResponse = await gladys.startContainer('mqtt');
-  const startedStatus: 'pulling' | undefined = started.status;
+  // first start of a `manual` entry: the image downloads in the background
+  // (202), and the SDK resolves once the container runs
+  const started: ContainerControlResponse = await gladys.startContainer('mqtt', {
+    timeoutMs: 60 * 60 * 1000,
+    onProgress: (pull: ContainerPullProgress) => {
+      const percent: number | null = pull.progress;
+      void percent;
+    },
+  });
+  const startedStatus: 'running' | undefined = started.status;
+  try {
+    await gladys.startContainer('frigate');
+  } catch (e) {
+    const waitError = e as ContainerWaitError;
+    const waitCode: ContainerWaitErrorCode | string = waitError.code;
+    const waitContainer: string = waitError.container;
+    void [waitCode, waitContainer];
+  }
+  const pollInterval: number = gladys.containerPullPollInterval;
+  void pollInterval;
   const pullProgress: number | null | undefined = containers[0]?.pull?.progress;
   const pullDetail: ContainerPullProgress['detail'] = null;
   const startError: ContainerStartError = 'UNABLE_TO_PULL_IMAGE';
@@ -239,6 +258,7 @@ const main = async (): Promise<void> => {
   void missingCapabilities;
   await gladys.stopContainer('mqtt');
   const restarted: ContainerControlResponse = await gladys.restartContainer('frigate');
+  await gladys.restartContainer('frigate', { timeoutMs: 1000 });
   void [startedStatus, pullProgress, pullDetail, lastError, restarted];
   const oauthType: string = WEBSOCKET_MESSAGE_TYPES.EXTERNAL_INTEGRATION.OAUTH_GET_AUTHORIZE_URL;
   void [hostPort, unassignedHostPort, portProtocol, browsable, portLabel, unnamedPort, portName, oauthType];

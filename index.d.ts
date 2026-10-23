@@ -260,13 +260,39 @@ export interface IntegrationContainer {
 }
 
 /**
- * Answer of startContainer / restartContainer: `status: 'pulling'` (HTTP 202)
- * when the image has to be downloaded first — the container is not running
- * yet, poll `getContainers()` until it is 'running' (or 'stopped' with a
- * `last_error`).
+ * Answer of startContainer / restartContainer, which resolve once the
+ * container is up: `{ success: true }` when the core started it right away,
+ * `{ success: true, status: 'running' }` after waiting for the download of
+ * its image (the core answered 202 `pulling`).
  */
 export interface ContainerControlResponse extends SuccessResponse {
-  status?: 'pulling';
+  status?: 'running';
+}
+
+/** Options of startContainer / restartContainer for the download of a missing image. */
+export interface ContainerWaitOptions {
+  /**
+   * How long to wait for the image download, in ms (default: 30 minutes —
+   * an image can weigh several GB); then rejects with `CONTAINER_START_TIMEOUT`.
+   */
+  timeoutMs?: number;
+  /** Called with the download progress at each poll of GET /container (every 2 s). */
+  onProgress?: (pull: ContainerPullProgress) => void;
+}
+
+/**
+ * Error codes a startContainer / restartContainer waiting for an image
+ * download rejects with (`error.code`): the entry's `last_error`, or
+ * `CONTAINER_NOT_STARTED` (the download ended without a running container:
+ * stopped meanwhile, Gladys restarted), or `CONTAINER_START_TIMEOUT`.
+ */
+export type ContainerWaitErrorCode = ContainerStartError | 'CONTAINER_NOT_STARTED' | 'CONTAINER_START_TIMEOUT';
+
+/** Error thrown by startContainer / restartContainer when the container did not come up. */
+export interface ContainerWaitError extends Error {
+  code: ContainerWaitErrorCode | string;
+  /** The sub-container name. */
+  container: string;
 }
 
 /** Payload entry of the hardware-updated event (contract C.4). */
@@ -2511,22 +2537,36 @@ export declare class GladysIntegration extends EventEmitter {
    * Create (if needed) and start a sub-container declared in the manifest —
    * typically after generating its config files in `/data`. The optional `env`
    * carries runtime-computed values, merged over the manifest env. Resolves
-   * `{ success: true, status: 'pulling' }` (HTTP 202) when the image is not
-   * on the disk yet (first start of a `manual` entry): the core downloads it
-   * in the background then starts the container — poll `getContainers()`
-   * for the 'pulling' progress and the final 'running' / `last_error`.
+   * once the container is up: when its image is not on the disk yet (first
+   * start of a `manual` entry), the core answers 202 `pulling` and downloads
+   * it in the background, and the SDK polls `getContainers()` every 2 s
+   * until the entry is 'running' (resolves `{ success: true, status: 'running' }`)
+   * — `onProgress` relays the download meanwhile. Rejects with a
+   * `ContainerWaitError` when it does not come up.
    */
-  startContainer(name: string, options?: { env?: Record<string, string> }): Promise<ContainerControlResponse>;
+  startContainer(
+    name: string,
+    options?: { env?: Record<string, string> } & ContainerWaitOptions,
+  ): Promise<ContainerControlResponse>;
 
-  /** Stop a sub-container; the supervisor will not restart it. */
+  /**
+   * Stop a sub-container; the supervisor will not restart it. Also aborts a
+   * download of its image in progress.
+   */
   stopContainer(name: string): Promise<SuccessResponse>;
 
   /**
    * Restart a sub-container, e.g. after rewriting its config through `/data`.
-   * Same `status: 'pulling'` answer as startContainer when the image has to
-   * be downloaded first.
+   * Like startContainer, resolves once the container is up, waiting for the
+   * download of its image when there is one.
    */
-  restartContainer(name: string): Promise<ContainerControlResponse>;
+  restartContainer(name: string, options?: ContainerWaitOptions): Promise<ContainerControlResponse>;
+
+  /**
+   * Poll interval of GET /container, in ms, while startContainer /
+   * restartContainer wait for an image download (default: 2000).
+   */
+  containerPullPollInterval: number;
 
   /**
    * Run an on-demand mediated network scan: the core — on the host network —

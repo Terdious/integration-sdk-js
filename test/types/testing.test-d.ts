@@ -54,6 +54,11 @@ const main = async (): Promise<void> => {
   await gladys.fake.configUpdated({ api_key: 'new' });
   await gladys.fake.scanRequest();
   gladys.fake.houses = [];
+  gladys.fake.containers = [{ name: 'frigate', status: 'pulling', desired: 'stopped', started_at: null, ports: [] }];
+  const frigateStart = gladys.startContainer('frigate');
+  gladys.fake.finishPull('frigate');
+  gladys.fake.finishPull('frigate', { lastError: 'UNABLE_TO_PULL_IMAGE' });
+  await frigateStart.catch(() => undefined);
   const refreshes: string[] = gladys.fake.widgetRefreshes;
   await gladys.fake.widgetAction('pellets', 'delivery', {}, { values: { bags: 72 } });
   await gladys.fake.calendarAccountUpdated('john');

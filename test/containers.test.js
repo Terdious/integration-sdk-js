@@ -140,6 +140,104 @@ describe('connection status & sub-container methods', () => {
     });
   });
 
+  describe('gladys.startContainer(name, options?) on a missing image (202 pulling)', () => {
+    const pullingEntry = (overrides = {}) => ({
+      name: 'frigate',
+      status: 'pulling',
+      desired: 'stopped',
+      started_at: null,
+      ports: [],
+      pull: { progress: 10, detail: '1/4 layers' },
+      last_error: null,
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      server.forceResponse('POST', '/container/frigate/start', 202, { success: true, status: 'pulling' });
+      server.forceResponse('POST', '/container/frigate/restart', 202, { success: true, status: 'pulling' });
+      gladys.containerPullPollInterval = 5;
+    });
+
+    it('should poll GET /container until the container runs, relaying the progress', async () => {
+      server.containers = [pullingEntry()];
+      const progress = [];
+      const response = await gladys.startContainer('frigate', {
+        onProgress: (pull) => {
+          progress.push(pull);
+          if (progress.length === 1) {
+            server.containers = [pullingEntry({ pull: null })];
+          } else {
+            server.containers = [pullingEntry({ status: 'running', desired: 'running', pull: null })];
+          }
+        },
+      });
+      assert.deepEqual(response, { success: true, status: 'running' });
+      assert.deepEqual(progress, [
+        { progress: 10, detail: '1/4 layers' },
+        // an entry without its pull object yet reads as an unknown progress
+        { progress: null, detail: null },
+      ]);
+      assert.equal(server.getRequests('GET', '/container').length, 3);
+    });
+
+    it('should wait the same way on a restart', async () => {
+      server.containers = [pullingEntry({ status: 'running' })];
+      assert.deepEqual(await gladys.restartContainer('frigate'), { success: true, status: 'running' });
+    });
+
+    it('should poll every 2 seconds by default', () => {
+      assert.equal(createClient(server).containerPullPollInterval, 2000);
+    });
+
+    it('should reject with the last_error of a failed download', async () => {
+      server.containers = [pullingEntry({ status: 'stopped', pull: null, last_error: 'UNABLE_TO_PULL_IMAGE' })];
+      await assert.rejects(gladys.startContainer('frigate'), (error) => {
+        assert.equal(error.code, 'UNABLE_TO_PULL_IMAGE');
+        assert.equal(error.container, 'frigate');
+        assert.match(error.message, /frigate could not start \(UNABLE_TO_PULL_IMAGE\)/);
+        return true;
+      });
+    });
+
+    it('should reject when the download ended without a running container', async () => {
+      // stopped meanwhile (the stop aborts the download), or Gladys restarted
+      server.containers = [pullingEntry({ status: 'stopped', pull: null })];
+      await assert.rejects(gladys.startContainer('frigate'), { code: 'CONTAINER_NOT_STARTED' });
+      // the entry vanished (update to a manifest without it)
+      server.containers = [];
+      await assert.rejects(gladys.restartContainer('frigate'), { code: 'CONTAINER_NOT_STARTED' });
+    });
+
+    it('should reject once the timeout is over, the download still running', async () => {
+      server.containers = [pullingEntry()];
+      await assert.rejects(gladys.startContainer('frigate', { timeoutMs: 20 }), (error) => {
+        assert.equal(error.code, 'CONTAINER_START_TIMEOUT');
+        assert.match(error.message, /still downloading its image after 0 s/);
+        return true;
+      });
+    });
+
+    it('should keep waiting when the onProgress callback throws', async () => {
+      const warnings = [];
+      gladys.logger = { ...gladys.logger, warn: (message) => warnings.push(message) };
+      server.containers = [pullingEntry()];
+      const response = await gladys.startContainer('frigate', {
+        onProgress: () => {
+          server.containers = [pullingEntry({ status: 'running' })];
+          throw new Error('boom');
+        },
+      });
+      assert.deepEqual(response, { success: true, status: 'running' });
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0], /onProgress callback threw: boom/);
+    });
+
+    it('should propagate a failure of GET /container while waiting', async () => {
+      server.forceResponse('GET', '/container', 500, { status: 500, code: 'SERVER_ERROR', message: 'boom' });
+      await assert.rejects(gladys.startContainer('frigate'), { code: 'SERVER_ERROR' });
+    });
+  });
+
   describe('gladys.stopContainer(name)', () => {
     it('should POST /container/:name/stop', async () => {
       const response = await gladys.stopContainer('mqtt');

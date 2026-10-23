@@ -234,6 +234,13 @@ export interface FakeGladys {
   deviceDeleted(device: Device): Promise<void>;
   /** The user saves the configuration form (onConfigUpdated); also becomes `config`. */
   configUpdated(config: IntegrationConfig): Promise<void>;
+  /**
+   * End the image download of a sub-container seeded with `status: 'pulling'`
+   * (its start answers 202 like the core's first start of a `manual` entry):
+   * it becomes 'running', or 'stopped' with `last_error` — a `startContainer`
+   * waiting for it then resolves, or rejects with that code.
+   */
+  finishPull(name: string, options?: { lastError?: string }): void;
   /** The user changes the hardware grants (onHardwareUpdated). */
   hardwareUpdated(containers: HardwareUpdatedContainer[]): Promise<void>;
   /** The user clicks "Connect" on an oauth2/account_link field (onOAuthAuthorizeUrl); the URL is in `data.authorize_url`. */

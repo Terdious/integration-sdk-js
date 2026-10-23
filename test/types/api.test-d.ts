@@ -43,6 +43,9 @@ import {
   House,
   IntegrationConfig,
   IntegrationContainer,
+  ContainerControlResponse,
+  ContainerPullProgress,
+  ContainerStartError,
   LinkedContact,
   LinkedUser,
   logger,
@@ -221,9 +224,16 @@ const main = async (): Promise<void> => {
   const unnamedPort: ContainerPort['name'] = null;
   const portName: ContainerPort['name'] = 'ocpp';
   await gladys.startContainer('mqtt', { env: { MQTT_PASSWORD: 's3cr3t' } });
-  await gladys.startContainer('mqtt');
+  // first start of a `manual` entry: the image downloads in the background (202)
+  const started: ContainerControlResponse = await gladys.startContainer('mqtt');
+  const startedStatus: 'pulling' | undefined = started.status;
+  const pullProgress: number | null | undefined = containers[0]?.pull?.progress;
+  const pullDetail: ContainerPullProgress['detail'] = null;
+  const startError: ContainerStartError = 'UNABLE_TO_PULL_IMAGE';
+  const lastError: IntegrationContainer['last_error'] = startError;
   await gladys.stopContainer('mqtt');
-  await gladys.restartContainer('frigate');
+  const restarted: ContainerControlResponse = await gladys.restartContainer('frigate');
+  void [startedStatus, pullProgress, pullDetail, lastError, restarted];
   const oauthType: string = WEBSOCKET_MESSAGE_TYPES.EXTERNAL_INTEGRATION.OAUTH_GET_AUTHORIZE_URL;
   void [hostPort, unassignedHostPort, portProtocol, browsable, portLabel, unnamedPort, portName, oauthType];
 

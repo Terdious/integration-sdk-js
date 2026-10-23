@@ -201,17 +201,54 @@ export interface ContainerHardwareDevice {
   available: boolean;
 }
 
+/**
+ * Download of a sub-container image started by `startContainer` /
+ * `restartContainer` when the image is not on the disk yet (first start of a
+ * `start: "manual"` entry, whose image the install no longer pulls).
+ */
+export interface ContainerPullProgress {
+  /** Bytes downloaded over bytes announced, 0-100; null until Docker announced a layer size. */
+  progress: number | null;
+  /** Layer summary, e.g. '5/12 layers'; null before the first progress event. */
+  detail: string | null;
+}
+
+/** last_error codes of an asynchronous sub-container start (GET /container). */
+export type ContainerStartError = 'UNABLE_TO_PULL_IMAGE' | 'UNABLE_TO_START_CONTAINER';
+
 /** A sub-container declared in the manifest, as returned by GET /container. */
 export interface IntegrationContainer {
   name: string;
-  /** Docker status, e.g. 'running' | 'stopped'. */
+  /**
+   * Docker status: 'running' | 'stopped', or 'pulling' while its image is
+   * being downloaded (first start of a `manual` entry; cores older than
+   * this contract never report it).
+   */
   status: string;
   /** Desired state kept by the supervisor, e.g. 'running' | 'stopped'. */
   desired: string;
   started_at: string | null;
   ports: ContainerPort[];
   devices?: ContainerHardwareDevice[];
+  /** Progress of the image download while `status` is 'pulling', null otherwise (absent on older cores). */
+  pull?: ContainerPullProgress | null;
+  /**
+   * Code of the last failed asynchronous start of the entry, cleared by the
+   * next start or stop; null otherwise (absent on older cores). After
+   * 'UNABLE_TO_PULL_IMAGE' the container stays 'stopped'.
+   */
+  last_error?: ContainerStartError | string | null;
   [key: string]: unknown;
+}
+
+/**
+ * Answer of startContainer / restartContainer: `status: 'pulling'` (HTTP 202)
+ * when the image has to be downloaded first — the container is not running
+ * yet, poll `getContainers()` until it is 'running' (or 'stopped' with a
+ * `last_error`).
+ */
+export interface ContainerControlResponse extends SuccessResponse {
+  status?: 'pulling';
 }
 
 /** Payload entry of the hardware-updated event (contract C.4). */
@@ -2453,15 +2490,23 @@ export declare class GladysIntegration extends EventEmitter {
   /**
    * Create (if needed) and start a sub-container declared in the manifest —
    * typically after generating its config files in `/data`. The optional `env`
-   * carries runtime-computed values, merged over the manifest env.
+   * carries runtime-computed values, merged over the manifest env. Resolves
+   * `{ success: true, status: 'pulling' }` (HTTP 202) when the image is not
+   * on the disk yet (first start of a `manual` entry): the core downloads it
+   * in the background then starts the container — poll `getContainers()`
+   * for the 'pulling' progress and the final 'running' / `last_error`.
    */
-  startContainer(name: string, options?: { env?: Record<string, string> }): Promise<SuccessResponse>;
+  startContainer(name: string, options?: { env?: Record<string, string> }): Promise<ContainerControlResponse>;
 
   /** Stop a sub-container; the supervisor will not restart it. */
   stopContainer(name: string): Promise<SuccessResponse>;
 
-  /** Restart a sub-container, e.g. after rewriting its config through `/data`. */
-  restartContainer(name: string): Promise<SuccessResponse>;
+  /**
+   * Restart a sub-container, e.g. after rewriting its config through `/data`.
+   * Same `status: 'pulling'` answer as startContainer when the image has to
+   * be downloaded first.
+   */
+  restartContainer(name: string): Promise<ContainerControlResponse>;
 
   /**
    * Run an on-demand mediated network scan: the core — on the host network —

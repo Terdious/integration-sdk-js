@@ -202,6 +202,18 @@ export interface ContainerHardwareDevice {
 }
 
 /**
+ * State of one Linux capability requested by a sub-container (manifest
+ * `capabilities`, contract C.3). The allowlist is Docker's default set; the
+ * container only gets the granted ones back on top of `CapDrop ALL`.
+ */
+export interface ContainerCapability {
+  /** Capability name without the `CAP_` prefix, e.g. 'CHOWN', 'SETUID'. */
+  name: string;
+  /** Whether the user granted it (install screen or Hardware block). */
+  granted: boolean;
+}
+
+/**
  * Download of a sub-container image started by `startContainer` /
  * `restartContainer` when the image is not on the disk yet (first start of a
  * `start: "manual"` entry, whose image the install no longer pulls).
@@ -230,6 +242,12 @@ export interface IntegrationContainer {
   started_at: string | null;
   ports: ContainerPort[];
   devices?: ContainerHardwareDevice[];
+  /**
+   * Requested Linux capabilities and whether the user granted each one —
+   * tell the user what is missing when the container cannot start without
+   * it (absent on cores older than the manifest `capabilities` field).
+   */
+  capabilities?: ContainerCapability[];
   /** Progress of the image download while `status` is 'pulling', null otherwise (absent on older cores). */
   pull?: ContainerPullProgress | null;
   /**
@@ -255,6 +273,8 @@ export interface ContainerControlResponse extends SuccessResponse {
 export interface HardwareUpdatedContainer {
   name: string;
   devices: ContainerHardwareDevice[];
+  /** Linux capability grants (absent on cores older than the manifest `capabilities` field). */
+  capabilities?: ContainerCapability[];
 }
 
 /** Capture types of the manifest `network_discovery` field (contract B.16). */

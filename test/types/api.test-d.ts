@@ -43,6 +43,7 @@ import {
   House,
   IntegrationConfig,
   IntegrationContainer,
+  ContainerCapability,
   ContainerControlResponse,
   ContainerPullProgress,
   ContainerStartError,
@@ -149,7 +150,8 @@ const main = async (): Promise<void> => {
 
   gladys.onHardwareUpdated(async (containers: HardwareUpdatedContainer[]) => {
     const granted: boolean = containers[0].devices[0].granted;
-    void granted;
+    const capabilityGranted: boolean | undefined = containers[0].capabilities?.[0]?.granted;
+    void [granted, capabilityGranted];
   });
 
   gladys.onOAuthAuthorizeUrl(
@@ -231,6 +233,10 @@ const main = async (): Promise<void> => {
   const pullDetail: ContainerPullProgress['detail'] = null;
   const startError: ContainerStartError = 'UNABLE_TO_PULL_IMAGE';
   const lastError: IntegrationContainer['last_error'] = startError;
+  const missingCapabilities: string[] = (containers[0]?.capabilities ?? [])
+    .filter((capability: ContainerCapability) => !capability.granted)
+    .map((capability) => capability.name);
+  void missingCapabilities;
   await gladys.stopContainer('mqtt');
   const restarted: ContainerControlResponse = await gladys.restartContainer('frigate');
   void [startedStatus, pullProgress, pullDetail, lastError, restarted];
